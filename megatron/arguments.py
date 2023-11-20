@@ -653,6 +653,10 @@ def _add_network_size_args(parser):
                        help='Untie embeddings and output weights.'),
     group.add_argument('--embedding-weights-in-fp32', action='store_true',
                        help='Cast word embedding weights to fp32 before embedding fwd.'),
+    group.add_argument('--use-parallel-residual', action="store_true",
+                       help="Use parallel residual connections with tied layernorm like PaLM (GPT-J style) e.g. x = x + attn(x) + mlp(x)"
+                       )
+
     return parser
 
 
