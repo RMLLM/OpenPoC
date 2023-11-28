@@ -605,6 +605,9 @@ def _add_network_size_args(parser):
     group.add_argument('--max-position-embeddings', type=int, default=None,
                        help='Maximum number of position embeddings to use. '
                        'This is the size of position embedding.')
+    group.add_argument('--rope-theta', type= float
+                       default= 10000.0,
+                       help='The base period of the ROPE embeddings. Only this value is valid when using rotary.')
     group.add_argument('--use-rotary-position-embeddings', action='store_true',
                        help='Use rotary positional embeddings or not')
     group.add_argument('--rotary-percent', type=float, default=1.0,
@@ -656,6 +659,10 @@ def _add_network_size_args(parser):
     group.add_argument('--use-parallel-residual', action="store_true",
                        help="Use parallel residual connections with tied layernorm like PaLM (GPT-J style) e.g. x = x + attn(x) + mlp(x)"
                        )
+    group.add_argument('--attention-head-type', type=str, default=None,
+                       choices=['multihead', 'multiquery'],
+                       help='Type of attention heads. `multihead` is the standard multi-head attention.'
+                       '`multiquery` shares the values and keys across attention heads')
 
     return parser
 

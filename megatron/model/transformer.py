@@ -1469,7 +1469,6 @@ class ParallelTransformerLayer(MegatronModule):
                                                 p=self.hidden_dropout,
                                                 training=self.training)
                 output = residual + self.drop_path(out)
-            print(f'===================== output shape: {output.shape}')
             if self.layer_type == LayerType.retro_decoder_with_retriever:
                 return output, retriever_output, moe_loss
             else:
