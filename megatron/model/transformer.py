@@ -101,7 +101,7 @@ class ParallelMLP(MegatronModule):
     state back into h hidden dimension.
     """
 
-    def __init__(self, config, moe=False, enable_expert_tensor_parallelism=False, parallel_output= False):
+    def __init__(self, config, moe=False, enable_expert_tensor_parallelism=False, parallel_output=False):
         super(ParallelMLP, self).__init__()
         args = get_args()
 
@@ -153,9 +153,9 @@ class ParallelMLP(MegatronModule):
             init_method=config.output_layer_init_method,
             bias=self.add_bias,
             input_is_parallel=True,
-            parallel_output= parallel_output,
             moe=moe,
-            enable_expert_tensor_parallelism=enable_expert_tensor_parallelism
+            enable_expert_tensor_parallelism=enable_expert_tensor_parallelism,
+            parallel_output=parallel_output
         )
 
     def forward(self, hidden_states):
@@ -290,10 +290,10 @@ class CoreAttention(MegatronModule):
                        key_layer.size(0))
 
         # [sq, b, np, hn] -> [sq, b * np, hn]
-        query_layer = query_layer.contiguous().view(output_size[2],
+        query_layer = query_layer.view(output_size[2],
                                        output_size[0] * output_size[1], -1)
         # [sk, b, np, hn] -> [sk, b * np, hn]
-        key_layer = key_layer.contiguous().view(output_size[3],
+        key_layer = key_layer.view(output_size[3],
                                    output_size[0] * output_size[1], -1)
 
         # preallocting input tensor: [b * np, sq, sk]
@@ -487,7 +487,7 @@ class ParallelAttention(MegatronModule):
     def __init__(self, config, layer_number,
                  attention_type=AttnType.self_attn,
                  attn_mask_type=AttnMaskType.padding,
-                 parallel_output= False):
+                 parallel_output=False):
         super(ParallelAttention, self).__init__()
         args = get_args()
         self.layer_number = max(1, layer_number)
@@ -601,7 +601,7 @@ class ParallelAttention(MegatronModule):
             bias=args.add_bias_linear,
             input_is_parallel=True,
             skip_bias_add=True,
-            parallel_output= parallel_output)
+            parallel_output=parallel_output)
 
 
     def _checkpointed_attention_forward(self, query_layer, key_layer,
@@ -647,7 +647,8 @@ class ParallelAttention(MegatronModule):
                                      head_dim)
                                      
     def split_tensor(self, mixed_x_layer):
-        query_layer = mixed_x_layer[:, :, :, :-2, :].reshape(mixed_x_layer.shape[:-1] + (-1, self.hidden_size_per_attention_head))
+        query_layer = mixed_x_layer[:, :, :, :-2, :].reshape(mixed_x_layer.shape[:-2] + (-1, self.hidden_size_per_attention_head))
+        # query_layer = mixed_x_layer[:, :, :, :-2, :]
         key_layer = mixed_x_layer[:, :, :, -2, :]
         value_layer = mixed_x_layer[:, :, :, -1, :]
 
@@ -690,7 +691,6 @@ class ParallelAttention(MegatronModule):
                 (-1, (self.num_key_value_groups + 2),
                  self.hidden_size_per_attention_head)
             mixed_x_layer = mixed_x_layer.view(*new_tensor_shape)
-
             # [sq, b, nkv, (nq // nkv + 2), hn] --> 3 [sq, b, np, hn]
             (query_layer,
              key_layer,
@@ -918,7 +918,6 @@ class ParallelTransformerLayer(MegatronModule):
         if self.use_parallel_residual:
             self.reduce= tensor_parallel.mappings.reduce_from_tensor_model_parallel_region
 
-
         # Layernorm on the input data.
         if args.normalization == 'layernorm':
             if get_accelerator().device_name() == 'cuda':
@@ -946,7 +945,8 @@ class ParallelTransformerLayer(MegatronModule):
         self.bias_dropout_fusion = config.bias_dropout_fusion
         self.drop_path = DropPath(drop_path_rate) if drop_path_rate > 0.0 else None
 
-        # if parallel-layer is not applied
+        # Layernorm on the attention output
+        # if Parallel-Layer is not applied
         if not self.use_parallel_residual:
             # Layernorm on the attention output
             if args.normalization == 'layernorm':
@@ -964,7 +964,7 @@ class ParallelTransformerLayer(MegatronModule):
                         eps=config.layernorm_epsilon)
             else:
                 self.post_attention_layernorm = MixedFusedRMSNorm(config.hidden_size, config.layernorm_epsilon)
-
+        
         # Cross attention.
         if self.layer_type in (LayerType.decoder,
                             LayerType.retro_decoder,
@@ -992,8 +992,7 @@ class ParallelTransformerLayer(MegatronModule):
             self.mlp = SwitchMLP(config) # Megatron-LM's MoE
         else:
             if self.num_experts <= 1: # dense, not MoE
-                self.mlp = ParallelMLP(config, 
-                                       parallel_output= self.use_parallel_residual)
+                self.mlp = ParallelMLP(config, parallel_output= self.use_parallel_residual)
             else: # DeepSpeed's MoE
                 enable_expert_tensor_parallelism = args.enable_expert_tensor_parallelism
                 self.mlp = MoE(args.hidden_size,
@@ -1252,50 +1251,54 @@ class ParallelTransformerLayer(MegatronModule):
                 retriever_attn_mask=None,
                 inference_params=None,
                 rotary_pos_emb=None):
-        # hidden_states: [s, b, h]
 
-        if self.add_bias:
-            if self.bias_dropout_fusion:
-                if self.training:
-                    bias_dropout_add_func = bias_dropout_add_fused_train
-                else:
-                    bias_dropout_add_func = bias_dropout_add_fused_inference
-            else:
-                bias_dropout_add_func = get_bias_dropout_add(self.training)
-        else:
-            if self.dropout_fusion:
-                if self.training:
-                    bias_dropout_add_func = dropout_add_fused_train
-                    dropout_add_func = dropout_add_fused_train
-                else:
-                    bias_dropout_add_func = dropout_add_fused_inference
-                    dropout_add_func = dropout_add_fused_inference
-            else:
-                dropout_add_func = get_dropout_add(self.training)
-        
         # hidden_states: [b, s, h]
         # apply PaLM (gpt-j) style parallel-layers
         # ref: https://github.com/EleutherAI/gpt-neox/blob/c883e8c6a2ff6a60b07f0f8006ce0208f41317f3/megatron/model/transformer.py#L804-L847
-        if self.use_parallel_residual :
+        if self.use_parallel_residual:
+            if self.add_bias:
+                if self.bias_dropout_fusion:
+                    if self.training:
+                        bias_dropout_add_func = bias_dropout_add_fused_train
+                    else:
+                        bias_dropout_add_func = bias_dropout_add_fused_inference
+                else:
+                    bias_dropout_add_func = get_bias_dropout_add(self.training)
+            else:
+                if self.dropout_fusion:
+                    if self.training:
+                        dropout_add_func = dropout_add_fused_train
+                    else:
+                        dropout_add_func = dropout_add_fused_inference
+                else:
+                    dropout_add_func = get_dropout_add(self.training)
+                
+            # pseudocode:
+            # x = x + attn(ln(x)) + mlp(ln(x))
+            # this means we can avoid doing the allreduce in the attn / mlp outputs
+            # to save communication time (we can do a single allreduce after we add mlp / attn outputs).
+            # due to a bug, the two layernorms are not tied in GPT-NeoX-20B. This is non-desirable, but
+            # we preserve the functionality for backwards compatibility
+
+            # need to modify
             residual= hidden_states
+            x= self.input_layernorm(hidden_states)
+            x1, x2= x, x
 
-            # Layer norm at the beginning of the transformer layer.
-            layernorm_output = self.input_layernorm(hidden_states)
-            x1, x2= layernorm_output, layernorm_output
-
-            # Self attention.
+            # self attention
             attention_output, attention_bias = \
-                self.self_attention(
-                    x1,
-                    attention_mask,
-                    inference_params=inference_params,
-                    rotary_pos_emb=rotary_pos_emb)
+                self.self_attention(x1,
+                                    attention_mask,
+                                    inference_params= inference_params,
+                                    rotary_pos_emb= rotary_pos_emb)
 
+            # MLP
             mlp_output, mlp_bias= self.mlp(x2)
+            
             attention_output= torch.transpose(attention_output, 0, 1)
             mlp_output= torch.transpose(mlp_output, 0, 1)
 
-            output = self.reduce(attention_output + mlp_output)
+            output= self.reduce(attention_output + mlp_output)
             output= torch.transpose(output, 0, 1)
 
             with torch.enable_grad():
@@ -1316,10 +1319,11 @@ class ParallelTransformerLayer(MegatronModule):
                 # else:
                 #     raise NotImplementedError("attention_bias and mlp_bias must both be None or not None")
 
-            return output
-            
-        # parallel-layers not applied
+
+            return output, None
+
         else:
+            # hidden_states: [s, b, h]
             # Layer norm at the beginning of the transformer layer.
             layernorm_output = self.input_layernorm(hidden_states)
 
@@ -1361,7 +1365,7 @@ class ParallelTransformerLayer(MegatronModule):
             else:
                 out = torch.nn.functional.dropout(attention_output + attention_bias,
                                                 p=self.hidden_dropout,
-                                                training=self.training) # rockmin 수정해야할 것 같음
+                                                training=self.training)
                 layernorm_input = residual + self.drop_path(out)
 
             # Layer norm post the self attention.
@@ -1442,6 +1446,7 @@ class ParallelTransformerLayer(MegatronModule):
                                                 p=self.hidden_dropout,
                                                 training=self.training)
                 output = residual + self.drop_path(out)
+
             if self.layer_type == LayerType.retro_decoder_with_retriever:
                 return output, retriever_output, moe_loss
             else:
