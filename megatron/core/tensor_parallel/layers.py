@@ -690,7 +690,8 @@ class RowParallelLinear(torch.nn.Module):
                  stride: int = 1,
                  keep_master_weight_for_test: bool = False,
                  skip_bias_add: bool = False,
-                 moe=False, enable_expert_tensor_parallelism=False):
+                 moe=False, enable_expert_tensor_parallelism=False,
+                 parallel_output=False):
         torch.nn.Module.__init__(self)
 
         # Keep input parameters
@@ -708,6 +709,7 @@ class RowParallelLinear(torch.nn.Module):
         self.config = config
         self.gradient_accumulation_fusion = config.gradient_accumulation_fusion
         self.sequence_parallel = config.sequence_parallel
+        self.parallel_output= parallel_output
         if self.sequence_parallel and not self.input_is_parallel:
             raise RuntimeError("To enable `sequence_parallel`, `input_is_parallel` must be `True`")
 
@@ -778,7 +780,9 @@ class RowParallelLinear(torch.nn.Module):
         )
 
         # All-reduce across all the partitions.
-        if self.sequence_parallel:
+        if self.parallel_output:
+            output_= output_parallel
+        elif self.sequence_parallel:
             output_ = reduce_scatter_to_sequence_parallel_region(output_parallel)
         elif self.is_expert_without_slicing: # non-expert only tensor-parallelism
             output_ = output_parallel

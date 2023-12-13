@@ -607,6 +607,9 @@ def _add_network_size_args(parser):
                        'This is the size of position embedding.')
     group.add_argument('--use-rotary-position-embeddings', action='store_true',
                        help='Use rotary positional embeddings or not')
+    group.add_argument('--rope_theta', type= float,
+                        default= 10000.0,
+                        help= 'The base period of the RoPE embeddings. Only this value is valid when using rotary.')
     group.add_argument('--rotary-percent', type=float, default=1.0,
                        help='Percent of rotary dimension to use, default 100%')
     group.add_argument('--no-position-embedding',
@@ -653,6 +656,8 @@ def _add_network_size_args(parser):
                        help='Untie embeddings and output weights.'),
     group.add_argument('--embedding-weights-in-fp32', action='store_true',
                        help='Cast word embedding weights to fp32 before embedding fwd.'),
+    group.add_argument('--use-parallel-residual', action= 'store_true',
+                        help= "Use parallel residual connections with tied layernorm like PaLM (GPT-J style) e.g. x = x + attn(x) + mlp(x)")
     return parser
 
 

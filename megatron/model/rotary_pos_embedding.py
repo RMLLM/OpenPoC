@@ -12,23 +12,30 @@ from torch import einsum, nn
 __all__ = ['RotaryEmbedding', 'apply_rotary_pos_emb']
 
 class RotaryEmbedding(nn.Module):
-    def __init__(self, dim):
+    def __init__(self, dim, max_position_embeddings= 2048, base= 10000.0):
         super().__init__()
-        inv_freq = 1.0 / (10000 ** (torch.arange(0, dim, 2).float() / dim))
+        self.dim= dim
+        self.max_position_embeddings= max_position_embeddings
+        self.base= base
+        inv_freq = 1.0 / (self.base ** (torch.arange(0, dim, 2).float() / dim))
         self.register_buffer('inv_freq', inv_freq)
         if importlib.util.find_spec('einops') is None:
             raise RuntimeError("einops is required for Rotary Embedding")
 
     def forward(self, max_seq_len, offset=0):
-        seq = torch.arange(max_seq_len, device=self.inv_freq.device) + offset
-        freqs = einsum('i , j -> i j', seq.type_as(self.inv_freq), self.inv_freq)
+        freqs= self._get_freq(max_seq_len, device= self.inv_freq.device, dtype= self.inv_freq.dtype, offset= offset)
+        
+        return freqs
+    
+    def _get_freq(self, max_seq_len, device, dtype, offset=0):
+        seq = torch.arange(max_seq_len, device=device, dtype= dtype) + offset
+        freqs = einsum('i , j -> i j', seq, self.inv_freq)
         # first part even vector components, second part odd vector components,
         #  2 * dim in dimension size
         emb = torch.cat((freqs, freqs), dim=-1)
         # emb [seq_length, .., dim]
         from einops import rearrange
         return rearrange(emb, 'n d -> n 1 1 d')
-
 
 def _rotate_half(x):
     """
