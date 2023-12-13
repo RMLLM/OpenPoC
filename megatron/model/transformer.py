@@ -648,7 +648,6 @@ class ParallelAttention(MegatronModule):
                                      
     def split_tensor(self, mixed_x_layer):
         query_layer = mixed_x_layer[:, :, :, :-2, :].reshape(mixed_x_layer.shape[:2] + (-1, self.hidden_size_per_attention_head))
-        # query_layer = mixed_x_layer[:, :, :, :-2, :]
         key_layer = mixed_x_layer[:, :, :, -2, :]
         value_layer = mixed_x_layer[:, :, :, -1, :]
 
@@ -1294,12 +1293,7 @@ class ParallelTransformerLayer(MegatronModule):
 
             # MLP
             mlp_output, mlp_bias= self.mlp(x2)
-            
-            attention_output= torch.transpose(attention_output, 0, 1)
-            mlp_output= torch.transpose(mlp_output, 0, 1)
-
             output= self.reduce(attention_output + mlp_output)
-            output= torch.transpose(output, 0, 1)
 
             with torch.enable_grad():
                 if attention_bias is not None and mlp_bias is not None:
